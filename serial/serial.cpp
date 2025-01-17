@@ -11,130 +11,26 @@
 #include <vector>
 #include <random>
 #include <chrono>
+#include <cuda_runtime.h>
+
+#include "points.h"
 
 #define UINT_MAX 4294967295
 #define INT_MAX 2147483647
+#define TEST 1
+
+extern "C" double HDparallel(Point * A, Point * B, int l1, int l2, int method, int* Aloc);
+//extern "C" void gpuAlloc(int l1, int l2);
 
 using namespace std;
 
-struct Point
-{
-    int l;
-    int w;
-    int h;
-
-    Point() {
-        l = INT_MAX;
-        w = INT_MAX;
-        h = INT_MAX;
-    }
-
-    Point(int a, int b, int c) {
-        l = a;
-        w = b;
-        h = c;
-    }
-
-    Point& operator=(const Point& other) {
-        if (&other == this)return *this;
-
-        l = other.l;
-        w = other.w;
-        h = other.h;
-
-        return *this;
-    }
-
-    bool operator==(const Point& other) const {
-        return l == other.l && w == other.w && h == other.h;
-    }
-
-    bool operator<(const Point& other) const {
-        int tmp1 = l + w * 10000 + h * 100000000;
-        int tmp2 = other.l + other.w * 10000 + other.h * 100000000;
-        return tmp1 < tmp2;
-    }
-
-    void swap(Point& other) {
-        if (&other == this)return;
-
-        std::swap(l, other.l);
-        std::swap(w, other.w);
-        std::swap(h, other.h);
-    }
-
-    double Distance(Point& other) {
-        int x = l - other.l;
-        int y = w - other.w;
-        int z = h - other.h;
-        return sqrt(x * x + y * y + z * z);
-    }
-};
-
-struct PointCMin
-{
-    Point p;
-    double cmin;
-
-    PointCMin() {
-        return;
-    }
-
-    PointCMin(Point _p, double init) {
-        p = _p;
-        cmin = init;
-    }
-
-    PointCMin& operator=(const PointCMin& other) {
-        p = other.p;
-        cmin = other.cmin;
-        return *this;
-    }
-
-    bool operator==(const PointCMin& other) const {
-        return cmin == other.cmin;
-    }
-
-    bool operator<(const PointCMin& other) const {
-        return cmin < other.cmin;
-    }
-    
-    bool operator>(const PointCMin& other) const {
-        return cmin > other.cmin;
-    }
-
-    int getValue() {
-        return p.l + p.w + p.h;
-    }
-};
-
-struct MyPoint {
-    Point p;
-    int mortonCode;
-
-    MyPoint() {
-        return;
-    }
-
-    MyPoint(Point _p, int m) {
-        p = _p;
-        mortonCode = m;
-    }
-
-    bool operator==(const MyPoint& other) const {
-        return mortonCode == other.mortonCode;
-    }
-
-    bool operator<(const MyPoint& other) const {
-        return mortonCode < other.mortonCode;
-    }
-};
 
 class EBHD
 {
 public:
     int l1, l2;
     Point* A, * B, * E;
+    unsigned int count;
 
     EBHD(int _l1, int _l2, Point* _A, Point* _B){
         l1 = _l1;
@@ -142,6 +38,7 @@ public:
         B = _B;
         A = _A;
         E = new Point[l1];
+        count = 0;
     }
 
     ~EBHD(){
@@ -177,6 +74,7 @@ public:
             bool breaked = false;
             for (int j = 0; j < l2; j++) {
                 double d = E[i].Distance(B[j]);
+                if (TEST)count++;
                 if (d < cmax) {
                     breaked = true;
                     break;
@@ -196,6 +94,7 @@ public:
     int l1, l2;
     Point* A, * B, * Az, * Bz;
     PointCMin* Z1, * Z2;
+    unsigned int count;
 
     ZHD(int _l1, int _l2, Point* _A, Point* _B) {
         l1 = _l1;
@@ -206,6 +105,7 @@ public:
         Z2 = new PointCMin[l2];
         Az = new Point[l1];
         Bz = new Point[l2];
+        count = 0;
 
         ZOrder();
     }
@@ -258,6 +158,7 @@ public:
             for (int j = 0; j < l2; j++) {
                 if (0 <= preindex - j) {
                     double disleft = Az[i].Distance(Bz[preindex - j]);
+                    if (TEST)count++;
                     if (disleft < cmax) {
                         preindex = preindex - j;
                         cmin = 0;
@@ -270,6 +171,7 @@ public:
                 }
                 if (preindex + j < l2) {
                     double disright = Az[i].Distance(Bz[preindex + j]);
+                    if (TEST)count++;
                     if (disright < cmax) {
                         preindex = preindex + j;
                         cmin = 0;
@@ -286,7 +188,6 @@ public:
                 preindex = minplace;
             }
         }
-
         return cmax;
     }
 };
@@ -432,6 +333,7 @@ public:
     Point* A, * B;
     MyPoint* Az, * Bz;
     int* Aloc;
+    unsigned int count;
 
     MyHD2(int _l1, int _l2, Point* _A, Point* _B) {
         A = _A;
@@ -441,7 +343,8 @@ public:
         Az = new MyPoint[l1];
         Bz = new MyPoint[l2];
         Aloc = new int[l1];
-    
+        count = 0;
+
         MySort();
     }
 
@@ -469,6 +372,15 @@ public:
         sort(Az, Az + l1);
         sort(Bz, Bz + l2);
 
+        for (int i = 0; i < l1; i++) {
+            A[i] = Az[i].p;
+        }
+        for (int i = 0; i < l2; i++) {
+            B[i] = Bz[i].p;
+        }
+    }
+
+    void AmapB() {
         int j = 0;
         for (int i = 0; i < l2; i++) {
             if (Bz[i].mortonCode >= Az[j].mortonCode) {
@@ -492,6 +404,7 @@ public:
             for (int i = 0; i < l2; i++) {
                 if (loc + i < l2) {
                     double d = tmp.Distance(Bz[loc + i].p);
+                    if (TEST)count++;
                     if (d <= cmax) {
                         cmin = 0;
                         break;
@@ -502,6 +415,7 @@ public:
                 }
                 if (loc >= i) {
                     double d = tmp.Distance(Bz[loc - i].p);
+                    if(TEST)count++;
                     if (d <= cmax) {
                         cmin = 0;
                         break;
@@ -520,17 +434,26 @@ public:
 
 int main()
 {
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+
+    //std::cout << "Device name: " << prop.name << std::endl;
+    //std::cout << "Max shared memory per block: " << prop.sharedMemPerBlock << " bytes" << std::endl;
+
     srand(time(nullptr));
 
-    Point* A, * B, * A2, * B2, * B3, * A4, * B4;
+    Point* A, * B, * A2, * B2, * A3, * B3, * A4, * B4, * A5, * B5, * A6, * B6, * A7, * B7;
     int l1, l2;
+    int* tmp = (int*) nullptr;
 
     l1 = 1000000;
-    l2 = 1000;
+    l2 = 1000000;
 
-    int x = 350;
-    int y = 350;
-    int z = 350;
+    int x = 500;
+    int y = 500;
+    int z = 500;
+
+    int modify = 10;
 
     A = new Point[l1];
     B = new Point[l2];
@@ -538,57 +461,121 @@ int main()
     A2 = new Point[l1];
     B2 = new Point[l2];
 
+    A3 = new Point[l1];
     B3 = new Point[l2];
 
     A4 = new Point[l1];
     B4 = new Point[l2];
 
+    A5 = new Point[l1];
+    B5 = new Point[l2];
+    
+    A6 = new Point[l1];
+    B6 = new Point[l2];
+
+    A7 = new Point[l1];
+    B7 = new Point[l2];
+
     for (int i = 0; i < l1; i++) {
-        A[i] = { rand() % x, rand() % y, rand() % z };
+        A[i] = { rand() % (x - modify), rand() % (y - modify), rand() % (z - modify) };
         A2[i] = A[i];
-        A4[i] = A[i];
+        A3[i] = A[i];
+        A4[i] = A[i]; 
+        A5[i] = A[i];
+        A6[i] = A[i];
+        A7[i] = A[i];
     }
     for (int i = 0; i < l2; i++) {
-        B[i] = { rand() % x, rand() % y, rand() % z };
+        B[i] = { rand() % (x - modify) + modify, rand() % (y - modify) + modify, rand() % (z - modify) + modify };
         B2[i] = B[i];
         B3[i] = B[i];
         B4[i] = B[i];
+        B5[i] = B[i];
+        B6[i] = B[i];
+        B7[i] = B[i];
     }
 
     double cmin = numeric_limits<double>::max();
-    PointCMin* A3 = new PointCMin[l1];
 
-    for (int i = 0; i < l1; i++) {
-        A3[i] = { A[i], cmin };
-    }
 
-    ZHD* HD2 = new ZHD(l1, l2, A2, B2);
+    ZHD* HD = new ZHD(l1, l2, A, B);
     auto start = std::chrono::high_resolution_clock::now();
-    std::cout << HD2->EarlyBreakDirectedHD() << std::endl;
+    std::cout << HD->EarlyBreakDirectedHD() << std::endl;
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    std::cout << "Execution time: " << duration.count() << " ms" << std::endl;
+    std::cout << "ZHD Execution time: " << duration.count() << " ms // " << HD->count << "count" << std::endl;
 
-    MyHD2* HD4 = new MyHD2(l1, l2, A4, B4);
+    std::cout << "-------------------------------------------------" << std::endl;
+
+    ZHD* HD_p = new ZHD(l1, l2, A2, B2);
     start = std::chrono::high_resolution_clock::now();
-    std::cout << HD4->EarlyBreakDirectedHD() << std::endl;
+    std::cout << HDparallel(HD_p->Az, HD_p->Bz, l1, l2, 1, tmp) << std::endl;
     end = std::chrono::high_resolution_clock::now();
     duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    std::cout << "Execution time: " << duration.count() << " ms" << std::endl;
-    
-    EBHD* HD = new EBHD(l1, l2, A, B);
+    std::cout << "ZHD_p1 Execution time: " << duration.count() << " ms // " << std::endl;
+
+    std::cout << "-------------------------------------------------" << std::endl;
+
+    ZHD* HD_p2 = new ZHD(l1, l2, A3, B3);
     start = std::chrono::high_resolution_clock::now();
-    std::cout << HD->EarlyBreakDirectedHD() << std::endl;
+    std::cout << HDparallel(HD_p2->Az, HD_p2->Bz, l1, l2, 3, tmp) << std::endl;
     end = std::chrono::high_resolution_clock::now();
     duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    std::cout << "Execution time: " << duration.count() << " ms" << std::endl;
+    std::cout << "ZHD_p2 Execution time: " << duration.count() << " ms // " << std::endl;
+
+    std::cout << "-------------------------------------------------" << std::endl;
     
-    MyHD* HD3 = new MyHD(l1, l2, A3, B3, x, y, z);
-/*
+    MyHD2* HD2 = new MyHD2(l1, l2, A4, B4);
+    start = std::chrono::high_resolution_clock::now();
+    end = std::chrono::high_resolution_clock::now();
+    HD2->AmapB();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "Merge time: " << duration.count() << " ms" << std::endl;
+    start = std::chrono::high_resolution_clock::now();
+    std::cout << HD2->EarlyBreakDirectedHD() << std::endl;
+    end = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "MyHD Execution time: " << duration.count() << " ms // " << HD2->count << "count" << std::endl;
+
+    std::cout << "-------------------------------------------------" << std::endl;
+    
+    //gpuAlloc(l1, l2);
+    MyHD2* HD2_p = new MyHD2(l1, l2, A5, B5);
+    start = std::chrono::high_resolution_clock::now();
+    end = std::chrono::high_resolution_clock::now();
+    HD2_p->AmapB();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "MyHD_p Merge time: " << duration.count() << " ms" << std::endl;
+    start = std::chrono::high_resolution_clock::now();
+    std::cout << HDparallel(HD2_p->A, HD2_p->B, l1, l2, 2, HD2_p->Aloc) << std::endl;
+    end = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "Execution time: " << duration.count() << " ms // " << std::endl;
+
+    std::cout << "-------------------------------------------------" << std::endl;
+    
+    EBHD* HD3 = new EBHD(l1, l2, A, B);
     start = std::chrono::high_resolution_clock::now();
     std::cout << HD3->EarlyBreakDirectedHD() << std::endl;
     end = std::chrono::high_resolution_clock::now();
     duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    std::cout << "Execution time: " << duration.count() << " ms" << std::endl;
-*/
+    std::cout << "EBHD Execution time: " << duration.count() << " ms // " << HD->count << "count" << std::endl;
+
+    std::cout << "-------------------------------------------------" << std::endl;
+
+    EBHD* HD3_p = new EBHD(l1, l2, A, B);
+    start = std::chrono::high_resolution_clock::now();
+    HD3_p->Excluding();
+    HD3_p->Randomize();
+    std::cout << HDparallel(HD3_p->E, HD3_p->B, l1, l2, 0, tmp) << std::endl;
+    end = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "EBHD_p Execution time: " << duration.count() << " ms" << std::endl;
+    
+    
+
+//    113,826,289
+// 42,060,145,691
+//     80,555,510
+// 37,450,969,980
 }
