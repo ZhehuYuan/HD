@@ -14,6 +14,7 @@
 #include <cuda_runtime.h>
 
 #include "points.h"
+#include "wkt_loader.h"
 
 #define UINT_MAX 4294967295
 #define INT_MAX 2147483647
@@ -42,6 +43,69 @@ public:
     }
 
     ~EBHD(){
+        delete[] A;
+        delete[] B;
+        delete[] E;
+    }
+
+    void Randomize() {
+        for (int i = 0; i < l1; i++) {
+            E[i].swap(E[rand() % l1]);
+        }
+        for (int i = 0; i < l2; i++) {
+            B[i].swap(B[rand() % l2]);
+        }
+    }
+
+    void Excluding() {
+        set<Point> setA(A, A + l1);
+        set<Point> setB(B, B + l2);
+        set<Point> result;
+        set_difference(setA.begin(), setA.end(), setB.begin(), setB.end(), inserter(result, result.end()));
+        l1 = result.size();
+        copy(result.begin(), result.end(), E);
+    }
+
+    double EarlyBreakDirectedHD() {
+        double cmax = 0;
+        Excluding();
+        Randomize();
+        for (int i = 0; i < l1; i++) {
+            double cmin = numeric_limits<double>::max();
+            bool breaked = false;
+            for (int j = 0; j < l2; j++) {
+                double d = E[i].Distance(B[j]);
+                if (TEST)count++;
+                if (d < cmax) {
+                    breaked = true;
+                    break;
+                }
+                if (d < cmin)cmin = d;
+            }
+            if (cmin > cmax && !breaked)cmax = cmin;
+        }
+
+        return cmax;
+    }
+};
+
+class NBHD
+{
+public:
+    int l1, l2;
+    Point* A, * B, * E;
+    unsigned int count;
+
+    NBHD(int _l1, int _l2, Point* _A, Point* _B) {
+        l1 = _l1;
+        l2 = _l2;
+        B = _B;
+        A = _A;
+        E = new Point[l1];
+        count = 0;
+    }
+
+    ~NBHD() {
         delete[] A;
         delete[] B;
         delete[] E;
@@ -446,17 +510,69 @@ int main()
     int l1, l2;
     int* tmp = (int*) nullptr;
 
-    l1 = 1000000;
-    l2 = 1000000;
+    l1 = 500000;
+    l2 = 500000;
 
-    int x = 500;
-    int y = 500;
-    int z = 500;
+    A = LoadPoints("D:\\note\\OSU\\Project Hausdorff Distance\\code\\serial\\serial\\hd_datasets\\lakes.bz2.wkt", &l1);
+    B = LoadPoints("D:\\note\\OSU\\Project Hausdorff Distance\\code\\serial\\serial\\hd_datasets\\parks_Europe.wkt", &l2);
 
-    int modify = 10;
+    int maxl = numeric_limits<int>::min();
+    int maxw = numeric_limits<int>::min();
+    int minl = numeric_limits<int>::max();
+    int minw = numeric_limits<int>::max();
 
-    A = new Point[l1];
-    B = new Point[l2];
+    for (int i = 0; i < l1; i++) {
+        Point p = A[i];
+        if (p.l < minl) minl = p.l;
+        if (p.w < minw) minw = p.w;
+        if (p.l > maxl) maxl = p.l;
+        if (p.w > maxw) maxw = p.w;
+    }
+
+    for (int i = 0; i < l2; i++) {
+        Point p = B[i];
+        if (p.l < minl) minl = p.l;
+        if (p.w < minw) minw = p.w;
+        if (p.l > maxl) maxl = p.l;
+        if (p.w > maxw) maxw = p.w;
+    }
+    
+    int x = maxl - minl;
+    int ratio = 1;
+    while (x / ratio > 1000) {
+        ratio += 1;
+    }
+    x /= ratio;
+
+    int y = maxw - minw;
+    while (y / ratio > 1000) {
+        ratio += 1;
+    }
+    y /= ratio;
+
+    int z = 1;
+    
+    printf("%d, %d, %d, (%d, %d, %d, %d), %d, %d\n", x, y, z, maxl, maxw, minl, minw, ratio, ratio);
+
+    std::ofstream fileA("pointsA.csv");
+    std::ofstream fileB("pointsB.csv");
+
+    for (int i = 0; i < l1; i++) {
+        A[i].l -= minl;
+        A[i].l /= ratio;
+        A[i].w -= minw;
+        A[i].w /= ratio;
+        //fileA << A[i].l << "," << A[i].w << "\n";
+    }
+    for (int i = 0; i < l2; i++) {
+        B[i].l -= minl;
+        B[i].l /= ratio;
+        B[i].w -= minw;
+        B[i].w /= ratio;
+        //fileB << B[i].l << "," << B[i].w << "\n";
+    }
+    fileA.close();
+    fileB.close();
 
     A2 = new Point[l1];
     B2 = new Point[l2];
@@ -469,15 +585,24 @@ int main()
 
     A5 = new Point[l1];
     B5 = new Point[l2];
-    
+
     A6 = new Point[l1];
     B6 = new Point[l2];
 
     A7 = new Point[l1];
     B7 = new Point[l2];
 
+    /*int x = 1024;
+    int y = 1024;
+    int z = 1;
+
+    int modify = 50;
+
+    A = new Point[l1];
+    B = new Point[l2];
+    */
     for (int i = 0; i < l1; i++) {
-        A[i] = { rand() % (x - modify), rand() % (y - modify), rand() % (z - modify) };
+        //A[i] = { rand() % (x - modify), rand() % (y - modify), rand() % (z - modify) };
         A2[i] = A[i];
         A3[i] = A[i];
         A4[i] = A[i]; 
@@ -486,7 +611,7 @@ int main()
         A7[i] = A[i];
     }
     for (int i = 0; i < l2; i++) {
-        B[i] = { rand() % (x - modify) + modify, rand() % (y - modify) + modify, rand() % (z - modify) + modify };
+        //B[i] = { rand() % (x - modify) + modify, rand() % (y - modify) + modify, rand() % (z - modify) + modify };
         B2[i] = B[i];
         B3[i] = B[i];
         B4[i] = B[i];
@@ -506,7 +631,7 @@ int main()
     std::cout << "ZHD Execution time: " << duration.count() << " ms // " << HD->count << "count" << std::endl;
 
     std::cout << "-------------------------------------------------" << std::endl;
-
+    /*
     ZHD* HD_p = new ZHD(l1, l2, A2, B2);
     start = std::chrono::high_resolution_clock::now();
     std::cout << HDparallel(HD_p->Az, HD_p->Bz, l1, l2, 1, tmp) << std::endl;
@@ -515,7 +640,7 @@ int main()
     std::cout << "ZHD_p1 Execution time: " << duration.count() << " ms // " << std::endl;
 
     std::cout << "-------------------------------------------------" << std::endl;
-
+    
     ZHD* HD_p2 = new ZHD(l1, l2, A3, B3);
     start = std::chrono::high_resolution_clock::now();
     std::cout << HDparallel(HD_p2->Az, HD_p2->Bz, l1, l2, 3, tmp) << std::endl;
@@ -524,6 +649,7 @@ int main()
     std::cout << "ZHD_p2 Execution time: " << duration.count() << " ms // " << std::endl;
 
     std::cout << "-------------------------------------------------" << std::endl;
+    */
     
     MyHD2* HD2 = new MyHD2(l1, l2, A4, B4);
     start = std::chrono::high_resolution_clock::now();
@@ -538,7 +664,7 @@ int main()
     std::cout << "MyHD Execution time: " << duration.count() << " ms // " << HD2->count << "count" << std::endl;
 
     std::cout << "-------------------------------------------------" << std::endl;
-    
+    /*
     //gpuAlloc(l1, l2);
     MyHD2* HD2_p = new MyHD2(l1, l2, A5, B5);
     start = std::chrono::high_resolution_clock::now();
@@ -553,16 +679,16 @@ int main()
     std::cout << "Execution time: " << duration.count() << " ms // " << std::endl;
 
     std::cout << "-------------------------------------------------" << std::endl;
-    
+    */
     EBHD* HD3 = new EBHD(l1, l2, A, B);
     start = std::chrono::high_resolution_clock::now();
     std::cout << HD3->EarlyBreakDirectedHD() << std::endl;
     end = std::chrono::high_resolution_clock::now();
     duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    std::cout << "EBHD Execution time: " << duration.count() << " ms // " << HD->count << "count" << std::endl;
+    std::cout << "EBHD Execution time: " << duration.count() << " ms // " << HD3->count << "count" << std::endl;
 
     std::cout << "-------------------------------------------------" << std::endl;
-
+    /*
     EBHD* HD3_p = new EBHD(l1, l2, A, B);
     start = std::chrono::high_resolution_clock::now();
     HD3_p->Excluding();
@@ -571,7 +697,7 @@ int main()
     end = std::chrono::high_resolution_clock::now();
     duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     std::cout << "EBHD_p Execution time: " << duration.count() << " ms" << std::endl;
-    
+    */
     
 
 //    113,826,289
